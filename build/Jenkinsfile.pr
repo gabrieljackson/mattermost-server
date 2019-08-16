@@ -134,9 +134,9 @@ pipeline {
                 dir('src/github.com/mattermost/mattermost-server/build') {
                     ansiColor('xterm') {
                         sh """
-                            docker-compose --no-ansi run --rm start_dependencies
-                            docker-compose --no-ansi ps
-                            docker-compose --no-ansi exec -T openldap bash -c 'ldapadd -x -D "cn=admin,dc=mm,dc=test,dc=com" -w mostest -f /${LDAP_DATA}-data.ldif';
+                        /usr/local/bin/docker-compose --no-ansi run --rm start_dependencies
+                        /usr/local/bin/docker-compose --no-ansi ps
+                        cat ../tests/${LDAP_DATA}-data.ldif | /usr/local/bin/docker-compose --no-ansi exec -T openldap bash -c 'ldapadd -x -D "cn=admin,dc=mm,dc=test,dc=com" -w mostest';
                         """
                     }
                 }
@@ -259,18 +259,27 @@ pipeline {
             }
         }
 
-        stage('Trigger docker image') {
+        stage('Build Docker Image') {
             environment {
                 GIT_COMMIT_SHORT = sh(
-                        script: "cd /tmp/mattermost-server && printf \$(git rev-parse --short HEAD)",
-                        returnStdout: true
+                    script: "cd /tmp/mattermost-server && printf \$(git rev-parse --short HEAD)",
+                    returnStdout: true
                 )
             }
             when {
                 expression { env.CHANGE_ID != null }
             }
             steps {
-                build job: '../../mk/mattermost-enterprise-edition-release', parameters: [string(name: 'RELEASE', value: "${CHANGE_ID}"), booleanParam(name: 'FROM_PR', value: true),string(name: 'PR_TAG', value: "${GIT_COMMIT_SHORT}")], propagate: false, wait: false
+                dir('src/github.com/mattermost/mattermost-server') {
+                    withCredentials([usernamePassword(credentialsId: 'matterbuild-docker-hub', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh 'docker login --username ${DOCKER_USER} --password ${DOCKER_PASS}'
+                        sh """
+                            docker build --no-cache --build-arg MM_PACKAGE=https://releases.mattermost.com/mattermost-platform-pr/${CHANGE_ID}/mattermost-enterprise-linux-amd64.tar.gz -t mattermost/mattermost-enterprise-edition:${GIT_COMMIT_SHORT} build
+                            docker push mattermost/mattermost-enterprise-edition:${GIT_COMMIT_SHORT}
+                            docker logout
+                        """
+                    }
+                }
             }
         }
     }
@@ -284,9 +293,16 @@ pipeline {
             dir('src/github.com/mattermost/mattermost-server/build') {
                 ansiColor('xterm') {
                     sh """
+                        # Capture docker logs
+                        docker-compose logs --tail="all" -t --no-color > docker-compose_logs
+                        docker ps -a --no-trunc > docker_ps
+                        docker stats -a --no-stream > docker_stats
+                        tar -czvf docker_logs.tar.gz docker-compose_logs docker_ps docker_stats
+
                         docker-compose --no-ansi down -v
                     """
                 }
+                archiveArtifacts 'docker_logs.tar.gz'
             }
         }
         cleanup {

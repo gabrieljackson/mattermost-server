@@ -73,7 +73,7 @@ var MigrateConfigCmd = &cobra.Command{
 	Use:     "migrate [from_config] [to_config]",
 	Short:   "Migrate existing config between backends",
 	Long:    "Migrate a file-based configuration to (or from) a database-based configuration. Point the Mattermost server at the target configuration to start using it",
-	Example: `config migrate path/to/config.json "postgres://mmuser:mostest@dockerhost:5432/mattermost_test?sslmode=disable&connect_timeout=10"`,
+	Example: `config migrate path/to/config.json "postgres://mmuser:mostest@localhost:5432/mattermost_test?sslmode=disable&connect_timeout=10"`,
 	Args:    cobra.ExactArgs(2),
 	RunE:    configMigrateCmdF,
 }
@@ -250,20 +250,8 @@ func configMigrateCmdF(command *cobra.Command, args []string) error {
 	from := args[0]
 	to := args[1]
 
-	// Get source config store - invalid config will throw error here
-	fromConfigStore, err := config.NewStore(from, false)
-	if err != nil {
-		return errors.Wrapf(err, "failed to access config %s", from)
-	}
+	err := config.Migrate(from, to)
 
-	// Get destination config store
-	toConfigStore, err := config.NewStore(to, false)
-	if err != nil {
-		return errors.Wrapf(err, "failed to access config %s", to)
-	}
-
-	// Copy config from source to destination
-	_, err = toConfigStore.Set(fromConfigStore.Get())
 	if err != nil {
 		return errors.Wrap(err, "failed to migrate config")
 	}
